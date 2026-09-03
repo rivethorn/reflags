@@ -1,10 +1,11 @@
 package reflags
 
 // ============================================================================
-// Type Info Presets
+// Type Info Builders
 // ============================================================================
 
-// Preset Arg_Type_Info values for the common primitive types.
+// Preset Arg_Type_Info values for the common primitive types; pass these
+// to opt_type / arg_type.
 string_type :: Arg_Type_Info{.String, nil, nil}
 int_type :: Arg_Type_Info{.Int, nil, nil}
 float_type :: Arg_Type_Info{.Float, nil, nil}
@@ -15,6 +16,9 @@ path_type :: Arg_Type_Info{.Path, nil, nil}
 // The values are copied to a stable heap allocation so they outlive the
 // input slice (which may come from context.temp_allocator).
 enum_type :: proc(values: []string) -> Arg_Type_Info {
+	// Copy values to a stable heap allocation, since the original
+	// slice literals may be allocated on context.temp_allocator
+	// which can be reset between function calls.
 	result := make([dynamic]string)
 	for v in values {
 		append(&result, v)
@@ -32,42 +36,138 @@ custom_type :: proc(
 }
 
 // ============================================================================
-// Option Factories - thin helpers over the Option struct
+// Option Definition
 // ============================================================================
 
+// Option_Builder is a step-by-step builder for an Option; start with
+// `option`, chain opt_* procedures, finish with opt_build.
+Option_Builder :: struct {
+	opt: Option,
+}
+
+// option starts building an option with the given long name and description.
+// The result defaults to a non-required, non-hidden String option.
+option :: proc(name, description: string) -> Option_Builder {
+	return Option_Builder {
+		opt = Option {
+			name = name,
+			description = description,
+			type_info = string_type,
+			required = false,
+			hidden = false,
+			multiple = false,
+		},
+	}
+}
+
+// opt_short sets the short name (e.g. "v" for -v).
+opt_short :: proc(b: ^Option_Builder, short: string) -> bool {
+	b.opt.short = short
+	return true
+}
+
+// opt_required marks the option as required.
+opt_required :: proc(b: ^Option_Builder) -> bool {
+	b.opt.required = true
+	return true
+}
+
+// opt_hidden hides the option from help output.
+opt_hidden :: proc(b: ^Option_Builder) -> bool {
+	b.opt.hidden = true
+	return true
+}
+
+// opt_multiple allows the option to be repeated; values are joined with
+// commas (read them back with get_strings).
+opt_multiple :: proc(b: ^Option_Builder) -> bool {
+	b.opt.multiple = true
+	return true
+}
+
+// opt_default sets the default value (as a string, applied when the option
+// is absent).
+opt_default :: proc(b: ^Option_Builder, val: string) -> bool {
+	b.opt.default_str = val
+	return true
+}
+
+// opt_type sets the value type of the option.
+opt_type :: proc(b: ^Option_Builder, t: Arg_Type_Info) -> bool {
+	b.opt.type_info = t
+	return true
+}
+
+// Build into a final Option
+// opt_note appends an extra note shown under this option-in-progress in help.
+// May be called multiple times; each note appears on its own line.
+opt_note :: proc(b: ^Option_Builder, note: string) -> bool {
+	append(&b.opt.notes, note)
+	return true
+}
+
+// opt_build finalizes the builder and returns the constructed Option.
+opt_build :: proc(b: Option_Builder) -> Option {
+	return b.opt
+}
+
+// Convenience builders for common option types
 // opt_flag builds a boolean flag option in one call (short may be "").
 opt_flag :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = bool_type}
+	b := option(name, description)
+	opt_type(&b, bool_type)
+	opt_short(&b, short)
+	return opt_build(b)
 }
 
 // opt_str builds a String option in one call (short may be "").
 opt_str :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = string_type}
+	b := option(name, description)
+	opt_type(&b, string_type)
+	opt_short(&b, short)
+	return opt_build(b)
 }
 
 // opt_str_req builds a required String option in one call (short may be "").
 opt_str_req :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = string_type, required = true}
+	b := option(name, description)
+	opt_type(&b, string_type)
+	opt_short(&b, short)
+	opt_required(&b)
+	return opt_build(b)
 }
 
 // opt_int builds an Int option in one call (short may be "").
 opt_int :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = int_type}
+	b := option(name, description)
+	opt_type(&b, int_type)
+	opt_short(&b, short)
+	return opt_build(b)
 }
 
 // opt_int_req builds a required Int option in one call (short may be "").
 opt_int_req :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = int_type, required = true}
+	b := option(name, description)
+	opt_type(&b, int_type)
+	opt_short(&b, short)
+	opt_required(&b)
+	return opt_build(b)
 }
 
 // opt_float builds a Float option in one call (short may be "").
 opt_float :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = float_type}
+	b := option(name, description)
+	opt_type(&b, float_type)
+	opt_short(&b, short)
+	return opt_build(b)
 }
 
 // opt_path builds a Path option in one call (short may be "").
 opt_path :: proc(name, short, description: string) -> Option {
-	return Option{name = name, short = short, description = description, type_info = path_type}
+	b := option(name, description)
+	opt_type(&b, path_type)
+	opt_short(&b, short)
+	return opt_build(b)
 }
 
 // opt_enum builds an Enum option in one call, restricted to the given
@@ -77,7 +177,13 @@ opt_enum :: proc(
 	values: []string,
 	default_val: string = "",
 ) -> Option {
-	return Option{name = name, short = short, description = description, type_info = enum_type(values), default_str = default_val}
+	b := option(name, description)
+	opt_type(&b, enum_type(values))
+	opt_short(&b, short)
+	if len(default_val) > 0 {
+		b.opt.default_str = default_val
+	}
+	return opt_build(b)
 }
 
 // opt_custom builds a Custom option in one call, parsed by parse_fn
@@ -86,50 +192,130 @@ opt_custom :: proc(
 	name, short, description: string,
 	parse_fn: proc(_: string) -> (any, ^Re_Error),
 ) -> Option {
-	return Option{name = name, short = short, description = description, type_info = custom_type(parse_fn)}
+	b := option(name, description)
+	opt_type(&b, custom_type(parse_fn))
+	opt_short(&b, short)
+	return opt_build(b)
 }
 
 // ============================================================================
-// Argument Factories - thin helpers over the Argument struct
+// Argument Definition
 // ============================================================================
+
+// Argument_Builder is a step-by-step builder for an Argument; start with
+// `argument`, chain arg_* procedures, finish with arg_build.
+Argument_Builder :: struct {
+	arg: Argument,
+}
+
+// argument starts building a positional argument. Defaults to required,
+// String type.
+argument :: proc(name, description: string) -> Argument_Builder {
+	return Argument_Builder {
+		arg = Argument {
+			name = name,
+			description = description,
+			type_info = string_type,
+			required = true,
+			variadic = false,
+			hidden = false,
+		},
+	}
+}
+
+// arg_type sets the value type of the argument.
+arg_type :: proc(b: ^Argument_Builder, t: Arg_Type_Info) -> bool {
+	b.arg.type_info = t
+	return true
+}
 
 // arg_string builds a required String positional argument in one call.
 arg_string :: proc(name, description: string) -> Argument {
-	return Argument{name = name, description = description, type_info = string_type, required = true}
+	return argument(name, description).arg
 }
 
 // arg_int builds a required Int positional argument in one call.
 arg_int :: proc(name, description: string) -> Argument {
-	return Argument{name = name, description = description, type_info = int_type, required = true}
+	a := argument(name, description)
+	arg_type(&a, int_type)
+	return a.arg
 }
 
 // arg_float builds a required Float positional argument in one call.
 arg_float :: proc(name, description: string) -> Argument {
-	return Argument{name = name, description = description, type_info = float_type, required = true}
+	a := argument(name, description)
+	arg_type(&a, float_type)
+	return a.arg
 }
 
 // arg_path builds a required Path positional argument in one call.
 arg_path :: proc(name, description: string) -> Argument {
-	return Argument{name = name, description = description, type_info = path_type, required = true}
+	a := argument(name, description)
+	arg_type(&a, path_type)
+	return a.arg
 }
 
 // arg_bool builds a required Bool positional argument in one call.
 arg_bool :: proc(name, description: string) -> Argument {
-	return Argument{name = name, description = description, type_info = bool_type, required = true}
+	a := argument(name, description)
+	arg_type(&a, bool_type)
+	return a.arg
 }
 
 // arg_enum builds a required Enum positional argument in one call,
 // restricted to the given values.
 arg_enum :: proc(name, description: string, values: []string) -> Argument {
-	return Argument{name = name, description = description, type_info = enum_type(values), required = true}
+	a := argument(name, description)
+	arg_type(&a, enum_type(values))
+	return a.arg
+}
+
+// arg_optional marks the argument as not required.
+arg_optional :: proc(b: ^Argument_Builder) -> bool {
+	b.arg.required = false
+	return true
+}
+
+// arg_variadic makes the argument consume all remaining positional
+// arguments (implies not required).
+arg_variadic :: proc(b: ^Argument_Builder) -> bool {
+	b.arg.variadic = true
+	b.arg.required = false
+	return true
+}
+
+// arg_hidden hides the argument from usage output.
+arg_hidden :: proc(b: ^Argument_Builder) -> bool {
+	b.arg.hidden = true
+	return true
+}
+
+// arg_note appends an extra note shown under this argument-in-progress in
+// help. May be called multiple times; each note appears on its own line.
+arg_note :: proc(b: ^Argument_Builder, note: string) -> bool {
+	append(&b.arg.notes, note)
+	return true
+}
+
+// arg_build finalizes the builder and returns the constructed Argument.
+arg_build :: proc(b: Argument_Builder) -> Argument {
+	return b.arg
 }
 
 // ============================================================================
-// Command Helper
+// Command Definition
 // ============================================================================
 
+// Command_Builder is a step-by-step builder for a Command; start with
+// `command_builder`, chain cmd_* procedures, finish with cmd_build.
+Command_Builder :: struct {
+	cmd: Command,
+}
+
+// Simple command creation - returns a Command directly
 // command creates a Command with the given name and description.
-// Populate it directly (options, arguments, subcommands, handler).
+// Populate it directly (options, arguments, subcommands, handler) or use
+// command_builder for a chained style.
 command :: proc(name: string, description: Maybe(string)) -> Command {
 	desc, ok := description.?
 	return Command {
@@ -139,6 +325,33 @@ command :: proc(name: string, description: Maybe(string)) -> Command {
 		handler = nil,
 		hidden = false,
 	}
+}
+
+// command_builder starts building a command with the given name and
+// description.
+command_builder :: proc(name, description: string) -> Command_Builder {
+	return Command_Builder {
+		cmd = Command {
+			name = name,
+			description = description,
+			long_desc = "",
+			handler = nil,
+			hidden = false,
+		},
+	}
+}
+
+// cmd_long_desc sets the extended description shown in --help output.
+cmd_long_desc :: proc(b: ^Command_Builder, desc: string) -> bool {
+	b.cmd.long_desc = desc
+	return true
+}
+
+// cmd_note appends an extra note to a Command while it's being built.
+// May be called multiple times; each note appears on its own line.
+cmd_note :: proc(b: ^Command_Builder, note: string) -> bool {
+	append(&b.cmd.notes, note)
+	return true
 }
 
 // option_note appends an extra note to an already-built Option.
@@ -154,8 +367,49 @@ command_note :: proc(c: ^Command, note: string) {
 	append(&c.notes, note)
 }
 
+// cmd_add_option appends an option to the command.
+cmd_add_option :: proc(b: ^Command_Builder, o: Option) -> bool {
+	append(&b.cmd.options, o)
+	return true
+}
+
+// cmd_add_argument appends a positional argument to the command.
+cmd_add_argument :: proc(b: ^Command_Builder, a: Argument) -> bool {
+	append(&b.cmd.arguments, a)
+	return true
+}
+
+// cmd_add_subcommand appends a subcommand to the command.
+cmd_add_subcommand :: proc(b: ^Command_Builder, sub: Command) -> bool {
+	append(&b.cmd.subcommands, sub)
+	return true
+}
+
+// cmd_set_handler assigns the handler invoked when the command is matched.
+cmd_set_handler :: proc(b: ^Command_Builder, h: Command_Handler) -> bool {
+	b.cmd.handler = h
+	return true
+}
+
+// cmd_hide hides the command from command listings.
+cmd_hide :: proc(b: ^Command_Builder) -> bool {
+	b.cmd.hidden = true
+	return true
+}
+
+// cmd_set_aliases sets alternative names that match this command.
+cmd_set_aliase :: proc(b: ^Command_Builder, alias: string) -> bool {
+	b.cmd.alias = alias
+	return true
+}
+
+// cmd_build finalizes the builder and returns the constructed Command.
+cmd_build :: proc(b: Command_Builder) -> Command {
+	return b.cmd
+}
+
 // ============================================================================
-// CLI Helpers
+// CLI Builder
 // ============================================================================
 
 // make_cli creates a CLI descriptor with color output enabled.
@@ -211,12 +465,13 @@ global_options :: proc() -> [dynamic]Option {
 	return result
 }
 
+// Helper to add global options to any command
 // add_global_options appends the standard --help and --version options to
-// a command.
-add_global_options :: proc(c: ^Command) -> bool {
+// a command builder.
+add_global_options :: proc(b: ^Command_Builder) -> bool {
 	opts := global_options()
 	for o in opts {
-		append(&c.options, o)
+		append(&b.cmd.options, o)
 	}
 	return true
 }
