@@ -135,11 +135,7 @@ Parsed_Args :: struct {
 // Get a typed value from parsed args
 // get_string returns the value of `name` as a string, or default_val if it
 // was not provided.
-get_string :: proc(
-	args: Parsed_Args,
-	name: string,
-	default_val: string = "",
-) -> string {
+get_string :: proc(args: Parsed_Args, name: string, default_val: string = "") -> string {
 	if val, ok := args.values[name]; ok {
 		return val
 	}
@@ -159,11 +155,7 @@ get_int :: proc(args: Parsed_Args, name: string, default_val: int = 0) -> int {
 
 // get_bool returns the value of `name` parsed as a bool ("true"/"1" are
 // true), or default_val if it was not provided.
-get_bool :: proc(
-	args: Parsed_Args,
-	name: string,
-	default_val: bool = false,
-) -> bool {
+get_bool :: proc(args: Parsed_Args, name: string, default_val: bool = false) -> bool {
 	if val, ok := args.values[name]; ok {
 		if b, ok := strconv.parse_bool(val); ok {
 			return b
@@ -177,11 +169,7 @@ get_bool :: proc(
 
 // get_float returns the value of `name` parsed as an f64, or default_val if
 // it was not provided or cannot be parsed.
-get_float :: proc(
-	args: Parsed_Args,
-	name: string,
-	default_val: f64 = 0.0,
-) -> f64 {
+get_float :: proc(args: Parsed_Args, name: string, default_val: f64 = 0.0) -> f64 {
 	if val, ok := args.values[name]; ok {
 		if f, ok := strconv.parse_f64(val); ok {
 			return f

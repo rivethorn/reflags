@@ -185,14 +185,7 @@ print_help :: proc(cli: ^CLI, out: ^os.File, cmd: ^Command = nil) {
 // print_version writes the CLI name and version to out.
 print_version :: proc(cli: ^CLI, out: ^os.File) {
 	s := get_style(cli)
-	fmt.fprintfln(
-		out,
-		"%s%s v%s%s",
-		s.bold,
-		s.bright_cyan,
-		cli.version,
-		s.reset,
-	)
+	fmt.fprintfln(out, "%s%s v%s%s", s.bold, s.bright_cyan, cli.version, s.reset)
 }
 
 // print_error prints err to stderr. Help_Requested reasons print the help
@@ -209,13 +202,7 @@ print_error :: proc(cli: ^CLI, err: ^Re_Error) {
 		print_version(cli, os.stderr)
 		return
 	case:
-		prefix := fmt.tprintf(
-			"%s%s%s error:%s",
-			s.bold,
-			s.bright_red,
-			cli.name,
-			s.reset,
-		)
+		prefix := fmt.tprintf("%s%s%s error:%s", s.bold, s.bright_red, cli.name, s.reset)
 		fmt.eprintfln("%s %s", prefix, err.message)
 
 		// Show usage hint for errors, naming the actual command that was run.
@@ -229,13 +216,7 @@ print_error :: proc(cli: ^CLI, err: ^Re_Error) {
 			if cli.style == .Odin {
 				flag = "-help"
 			}
-			fmt.eprintfln(
-				"\n%sRun '%s %s' for usage.%s",
-				s.dim,
-				cmd_name,
-				flag,
-				s.reset,
-			)
+			fmt.eprintfln("\n%sRun '%s %s' for usage.%s", s.dim, cmd_name, flag, s.reset)
 		}
 	}
 }
@@ -246,12 +227,7 @@ print_error :: proc(cli: ^CLI, err: ^Re_Error) {
 
 // write_header writes the styled app name/version (plus command name when
 // printing a subcommand).
-write_header :: proc(
-	builder: ^strings.Builder,
-	s: style_set,
-	cli: ^CLI,
-	cmd: ^Command,
-) {
+write_header :: proc(builder: ^strings.Builder, s: style_set, cli: ^CLI, cmd: ^Command) {
 	strings.write_string(builder, s.bold)
 	strings.write_string(builder, s.bright_cyan)
 	strings.write_string(builder, cli.name)
@@ -275,12 +251,7 @@ write_header :: proc(
 
 // write_usage_line writes the "Usage: ..." line, including [OPTIONS],
 // argument placeholders, and a <COMMAND> hint when subcommands exist.
-write_usage_line :: proc(
-	builder: ^strings.Builder,
-	s: style_set,
-	cli: ^CLI,
-	cmd: ^Command,
-) {
+write_usage_line :: proc(builder: ^strings.Builder, s: style_set, cli: ^CLI, cmd: ^Command) {
 	strings.write_string(builder, s.bold)
 	strings.write_string(builder, s.bright_green)
 	strings.write_string(builder, "Usage:")
@@ -449,10 +420,7 @@ write_option_line :: proc(
 	// Padding
 	current_width := option_display_width(style, opt)
 	padding := max_width - current_width + 2
-	strings.write_string(
-		builder,
-		strings.repeat(" ", padding, context.temp_allocator),
-	)
+	strings.write_string(builder, strings.repeat(" ", padding, context.temp_allocator))
 
 	// Description
 	strings.write_string(builder, opt.description)
@@ -461,10 +429,7 @@ write_option_line :: proc(
 	if len(opt.default_str) > 0 && opt.type_info.kind != .Bool {
 		strings.write_string(builder, " ")
 		strings.write_string(builder, s.dim)
-		strings.write_string(
-			builder,
-			fmt.tprintf("(default: %s)", opt.default_str),
-		)
+		strings.write_string(builder, fmt.tprintf("(default: %s)", opt.default_str))
 		strings.write_string(builder, s.reset)
 	}
 
@@ -498,11 +463,7 @@ write_notes :: proc(
 }
 
 // write_arguments writes the "Arguments:" section for a command.
-write_arguments :: proc(
-	builder: ^strings.Builder,
-	s: style_set,
-	cmd: ^Command,
-) {
+write_arguments :: proc(builder: ^strings.Builder, s: style_set, cmd: ^Command) {
 	strings.write_string(builder, s.bold)
 	strings.write_string(builder, s.bright_blue)
 	strings.write_string(builder, "Arguments:")
@@ -544,11 +505,7 @@ write_arguments :: proc(
 }
 
 // write_subcommands writes the "Commands:" section for a command.
-write_subcommands :: proc(
-	builder: ^strings.Builder,
-	s: style_set,
-	cmd: ^Command,
-) {
+write_subcommands :: proc(builder: ^strings.Builder, s: style_set, cmd: ^Command) {
 	strings.write_string(builder, s.bold)
 	strings.write_string(builder, s.bright_magenta)
 	strings.write_string(builder, "Commands:")
@@ -573,10 +530,7 @@ write_subcommands :: proc(
 		strings.write_string(builder, s.reset)
 
 		padding := max_name_len - len(sub.name) + 2
-		strings.write_string(
-			builder,
-			strings.repeat(" ", padding, context.temp_allocator),
-		)
+		strings.write_string(builder, strings.repeat(" ", padding, context.temp_allocator))
 		strings.write_string(builder, sub.description)
 		strings.write_byte(builder, '\n')
 	}
@@ -615,12 +569,7 @@ type_display_name :: proc(t: Arg_Type_Info) -> string {
 	case .Path:
 		return "PATH"
 	case .Enum:
-		return fmt.tprintf(
-			"%s%s%s",
-			"{",
-			strings.join(t.enum_values, "|", context.allocator),
-			"}",
-		)
+		return fmt.tprintf("%s%s%s", "{", strings.join(t.enum_values, "|", context.allocator), "}")
 	case .Custom:
 		return "VALUE"
 	}
@@ -629,12 +578,7 @@ type_display_name :: proc(t: Arg_Type_Info) -> string {
 
 // write_wrapped writes text to the builder, wrapping at width columns and
 // indenting every line with indent.
-write_wrapped :: proc(
-	builder: ^strings.Builder,
-	text: string,
-	width: int,
-	indent: string,
-) {
+write_wrapped :: proc(builder: ^strings.Builder, text: string, width: int, indent: string) {
 	words := strings.split(text, " ", context.temp_allocator)
 	line_width := len(indent)
 
@@ -691,14 +635,7 @@ error_output :: proc(msg: string) {
 // errors) or "mimir install" (command errors).
 command_error :: proc(prefix: string, msg: string) {
 	s := make_style(true)
-	fmt.eprintfln(
-		"%s%s%s error:%s %s",
-		s.bold,
-		s.bright_red,
-		prefix,
-		s.reset,
-		msg,
-	)
+	fmt.eprintfln("%s%s%s error:%s %s", s.bold, s.bright_red, prefix, s.reset, msg)
 }
 
 // error_hint prints the "Run '<cmd> -help' for usage." line (Odin style).
