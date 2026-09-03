@@ -4,6 +4,8 @@ Builder-style command-line argument parser for [Odin](https://odin-lang.org).
 
 Define commands, options, and positional arguments declaratively, then parse `os.args` against them. Subcommands, typed values, defaults, variadic args, aliases, colored help — all without leaving Odin.
 
+![screenshot](assets/screen.jpg)
+
 ```odin
 import reflags "pkgs:reflags"
 ```
