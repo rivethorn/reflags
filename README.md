@@ -209,8 +209,8 @@ cli.style = .Unix
 
 | `Parsing_Style` | Long flag | Value syntax | Short / bundling | Underscore handling |
 |---|---|---|---|---|
-| `.Odin` | `-flag` | `-flag:value` (required for non-bool) | No short flags; single dash only | `-no_git` matches `no-git` |
-| `.Unix` (default) | `--flag`, `-s` | `--flag=value`, `--flag value`, `-ovalue`, `-o=value` | Bundled `-abc` | — |
+| `.Odin` (default) | `-flag` | `-flag:value` (required for non-bool) | No short flags; single dash only | `-no_git` matches `no-git` |
+| `.Unix` | `--flag`, `-s` | `--flag=value`, `--flag value`, `-ovalue`, `-o=value` | Bundled `-abc` | — |
 
 Both styles treat `--` as end-of-options — everything after is positional.
 
