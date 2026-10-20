@@ -17,10 +17,31 @@ Parse_Ctx :: struct {
 	args:             []string,
 	values:           map[string]string,
 	positionals:      [dynamic]string,
+	owned:            [dynamic]string, // Fresh strings stored into `values`
 	seen_options:     map[string]bool,
 	seen_positionals: int,
 	strict:           bool,
 	style:            Parsing_Style,
+}
+
+// value_copy turns `val` into parse-owned memory: a heap clone recorded in
+// the context, freed when the Parsed_Args is destroyed. Use it whenever a
+// stored value is newly built (typed values, joined repetitions); values
+// that just borrow from raw args can be stored directly.
+@(private = "file")
+value_copy :: proc(ctx: ^Parse_Ctx, val: string) -> string {
+	owned := strings.clone(val, context.allocator)
+	append(&ctx.owned, owned)
+	return owned
+}
+
+// discard_ctx_owned frees the parse-owned value strings of a failed parse.
+@(private = "file")
+discard_ctx_owned :: proc(ctx: ^Parse_Ctx) {
+	for val in ctx.owned {
+		delete_string(val)
+	}
+	delete(ctx.owned)
 }
 
 // ============================================================================
@@ -32,7 +53,14 @@ Parse_Ctx :: struct {
 // and positional arguments, and validates required fields / applies
 // defaults. Returns the parsed result or an ^Error. Call destroy on the
 // result when done.
-parse :: proc(cli: ^CLI, args: []string, strict: bool = true) -> (Parsed_Args, ^Re_Error) {
+parse :: proc(
+	cli: ^CLI,
+	args: []string,
+	strict: bool = true,
+) -> (
+	Parsed_Args,
+	^Re_Error,
+) {
 	ctx := Parse_Ctx {
 		cli          = cli,
 		current_cmd  = cli.root_cmd,
@@ -49,6 +77,7 @@ parse :: proc(cli: ^CLI, args: []string, strict: bool = true) -> (Parsed_Args, ^
 		delete(ctx.values)
 		delete(ctx.positionals)
 		delete(ctx.seen_options)
+		discard_ctx_owned(&ctx)
 		return Parsed_Args{}, err
 	}
 
@@ -57,6 +86,7 @@ parse :: proc(cli: ^CLI, args: []string, strict: bool = true) -> (Parsed_Args, ^
 		delete(ctx.values)
 		delete(ctx.positionals)
 		delete(ctx.seen_options)
+		discard_ctx_owned(&ctx)
 		return Parsed_Args{}, err
 	}
 
@@ -65,6 +95,7 @@ parse :: proc(cli: ^CLI, args: []string, strict: bool = true) -> (Parsed_Args, ^
 		delete(ctx.values)
 		delete(ctx.positionals)
 		delete(ctx.seen_options)
+		discard_ctx_owned(&ctx)
 		return Parsed_Args{}, err
 	}
 
@@ -72,6 +103,8 @@ parse :: proc(cli: ^CLI, args: []string, strict: bool = true) -> (Parsed_Args, ^
 	parsed.command = ctx.current_cmd
 	parsed.values = ctx.values
 	parsed.positionals = ctx.positionals[:]
+	parsed.owned = ctx.owned[:]
+	delete(ctx.seen_options)
 
 	return parsed, nil
 }
@@ -198,7 +231,8 @@ parse_options_and_args :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			}
 		} else if strings.has_prefix(arg, "-") && len(arg) > 1 {
 			// Short option(s): -v, -abc, -o value, -o=value
-			if err := parse_short_options(ctx, arg, short_options, &i); err != nil {
+			if err := parse_short_options(ctx, arg, short_options, &i);
+			   err != nil {
 				return err
 			}
 		} else {
@@ -215,7 +249,11 @@ parse_options_and_args :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 }
 
 // parse_long_option handles a single `--name`, `--name=value` argument.
-parse_long_option :: proc(ctx: ^Parse_Ctx, arg: string, options: map[string]^Option) -> ^Re_Error {
+parse_long_option :: proc(
+	ctx: ^Parse_Ctx,
+	arg: string,
+	options: map[string]^Option,
+) -> ^Re_Error {
 	name_value := arg[2:] // strip --
 
 	name: string
@@ -263,15 +301,18 @@ parse_long_option :: proc(ctx: ^Parse_Ctx, arg: string, options: map[string]^Opt
 				name,
 			)
 		}
-		parsed_val, err := parse_value(value, opt.type_info)
+		parsed_val, err := parse_value(ctx, value, opt.type_info)
 		if err != nil {
 			return err
 		}
 		if opt.multiple {
 			existing := ctx.values[name]
 			if existing != "" {
-				// Join existing and new with comma separator
-				ctx.values[name] = strings.concatenate({existing, ",", parsed_val})
+				joined := strings.concatenate(
+					{existing, ",", parsed_val},
+					context.temp_allocator,
+				)
+				ctx.values[name] = value_copy(ctx, joined)
 			} else {
 				ctx.values[name] = parsed_val
 			}
@@ -320,14 +361,18 @@ parse_short_options :: proc(
 				// Check if there's an = sign
 				if shorts[j + 1] == '=' {
 					value := shorts[j + 2:]
-					parsed_val, err := parse_value(value, opt.type_info)
+					parsed_val, err := parse_value(ctx, value, opt.type_info)
 					if err != nil {
 						return err
 					}
 					if opt.multiple {
 						existing := ctx.values[opt.name]
 						if existing != "" {
-							ctx.values[opt.name] = strings.concatenate({existing, ",", parsed_val})
+							joined := strings.concatenate(
+								{existing, ",", parsed_val},
+								context.temp_allocator,
+							)
+							ctx.values[opt.name] = value_copy(ctx, joined)
 						} else {
 							ctx.values[opt.name] = parsed_val
 						}
@@ -339,14 +384,18 @@ parse_short_options :: proc(
 				}
 				// Otherwise, rest is value
 				value := shorts[j + 1:]
-				parsed_val, err := parse_value(value, opt.type_info)
+				parsed_val, err := parse_value(ctx, value, opt.type_info)
 				if err != nil {
 					return err
 				}
 				if opt.multiple {
 					existing := ctx.values[opt.name]
 					if existing != "" {
-						ctx.values[opt.name] = strings.concatenate({existing, ",", parsed_val})
+						joined := strings.concatenate(
+							{existing, ",", parsed_val},
+							context.temp_allocator,
+						)
+						ctx.values[opt.name] = value_copy(ctx, joined)
 					} else {
 						ctx.values[opt.name] = parsed_val
 					}
@@ -367,14 +416,18 @@ parse_short_options :: proc(
 						opt.name,
 					)
 				}
-				parsed_val, err := parse_value(value, opt.type_info)
+				parsed_val, err := parse_value(ctx, value, opt.type_info)
 				if err != nil {
 					return err
 				}
 				if opt.multiple {
 					existing := ctx.values[opt.name]
 					if existing != "" {
-						ctx.values[opt.name] = strings.concatenate({existing, ",", parsed_val})
+						joined := strings.concatenate(
+							{existing, ",", parsed_val},
+							context.temp_allocator,
+						)
+						ctx.values[opt.name] = value_copy(ctx, joined)
 					} else {
 						ctx.values[opt.name] = parsed_val
 					}
@@ -422,16 +475,21 @@ parse_positional :: proc(
 
 	if arg_def_index == -1 {
 		// No more argument definitions - check if last arg is variadic
-		if len(cmd.arguments) > 0 && cmd.arguments[len(cmd.arguments) - 1].variadic {
+		if len(cmd.arguments) > 0 &&
+		   cmd.arguments[len(cmd.arguments) - 1].variadic {
 			arg_def_index = len(cmd.arguments) - 1
 		} else {
-			return make_error(.Extra_Arguments, fmt.tprintf("Unexpected argument: %s", arg), cmd)
+			return make_error(
+				.Extra_Arguments,
+				fmt.tprintf("Unexpected argument: %s", arg),
+				cmd,
+			)
 		}
 	}
 
 	arg_def := &cmd.arguments[arg_def_index]
 
-	parsed_val, err := parse_value(arg, arg_def.type_info)
+	parsed_val, err := parse_value(ctx, arg, arg_def.type_info)
 	if err != nil {
 		return err
 	}
@@ -441,7 +499,11 @@ parse_positional :: proc(
 		key := arg_def.name
 		existing := ctx.values[key]
 		if existing != "" {
-			ctx.values[key] = strings.concatenate({existing, ",", parsed_val})
+			joined := strings.concatenate(
+				{existing, ",", parsed_val},
+				context.temp_allocator,
+			)
+			ctx.values[key] = value_copy(ctx, joined)
 		} else {
 			ctx.values[key] = parsed_val
 		}
@@ -461,26 +523,45 @@ parse_positional :: proc(
 
 // parse_value converts a raw string to the type described by type_info,
 // returning it as a normalized string or an Invalid_Value / Parse_Error.
-parse_value :: proc(value: string, type_info: Arg_Type_Info) -> (string, ^Re_Error) {
+// Fresh results (typed values, custom parses) are heap copies owned by the
+// parse context; borrowed results (strings, paths, enums) point into the
+// caller's raw value.
+parse_value :: proc(
+	ctx: ^Parse_Ctx,
+	value: string,
+	type_info: Arg_Type_Info,
+) -> (
+	string,
+	^Re_Error,
+) {
 	switch type_info.kind {
 	case .String:
 		return value, nil
 	case .Int:
 		i, ok := strconv.parse_int(value, 10)
 		if !ok {
-			return "", make_error(.Invalid_Value, fmt.tprintf("Invalid integer: %s", value))
+			return "", make_error(
+				.Invalid_Value,
+				fmt.tprintf("Invalid integer: %s", value),
+			)
 		}
-		return fmt.tprintf("%d", i), nil
+		return value_copy(ctx, fmt.tprintf("%d", i)), nil
 	case .Float:
 		f, ok := strconv.parse_f64(value)
 		if !ok {
-			return "", make_error(.Invalid_Value, fmt.tprintf("Invalid float: %s", value))
+			return "", make_error(
+				.Invalid_Value,
+				fmt.tprintf("Invalid float: %s", value),
+			)
 		}
-		return fmt.tprintf("%g", f), nil
+		return value_copy(ctx, fmt.tprintf("%g", f)), nil
 	case .Bool:
 		b, ok := strconv.parse_bool(value)
 		if !ok {
-			return "", make_error(.Invalid_Value, fmt.tprintf("Invalid boolean: %s", value))
+			return "", make_error(
+				.Invalid_Value,
+				fmt.tprintf("Invalid boolean: %s", value),
+			)
 		}
 		if b {
 			return "true", nil
@@ -502,7 +583,11 @@ parse_value :: proc(value: string, type_info: Arg_Type_Info) -> (string, ^Re_Err
 				fmt.tprintf(
 					"Invalid value '%s'. Valid values: %s",
 					value,
-					strings.join(type_info.enum_values, "|", context.temp_allocator),
+					strings.join(
+						type_info.enum_values,
+						"|",
+						context.temp_allocator,
+					),
 				),
 			)
 		}
@@ -513,22 +598,28 @@ parse_value :: proc(value: string, type_info: Arg_Type_Info) -> (string, ^Re_Err
 			if err != nil {
 				return "", err
 			}
-			// Convert any to string for storage
+			// Store the custom result as an owned copy, whatever it was.
 			switch v in val {
 			case string:
-				return v, nil
+				return value_copy(ctx, v), nil
 			case int:
-				return fmt.tprintf("%d", v), nil
+				return value_copy(ctx, fmt.tprintf("%d", v)), nil
 			case bool:
 				if v {return "true", nil}; return "false", nil
 			case f64:
-				return fmt.tprintf("%g", v), nil
+				return value_copy(ctx, fmt.tprintf("%g", v)), nil
 			}
-			return "", make_error(.Parse_Error, "Unhandled custom parse result type")
+			return "", make_error(
+				.Parse_Error,
+				"Unhandled custom parse result type",
+			)
 		}
 		return "", make_error(.Parse_Error, "Custom parser not provided")
 	}
-	return "", make_error(.Parse_Error, fmt.tprintf("Unknown type kind: %v", type_info.kind))
+	return "", make_error(
+		.Parse_Error,
+		fmt.tprintf("Unknown type kind: %v", type_info.kind),
+	)
 }
 
 // ============================================================================
@@ -554,11 +645,15 @@ validate_parsed :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			}
 			// Apply default value if present
 			if len(opt.default_str) > 0 {
-				val, err := parse_value(opt.default_str, opt.type_info)
+				val, err := parse_value(ctx, opt.default_str, opt.type_info)
 				if err != nil {
 					return make_error(
 						.Invalid_Value,
-						fmt.tprintf("Invalid default value for --%s: %s", opt.name, err.message),
+						fmt.tprintf(
+							"Invalid default value for --%s: %s",
+							opt.name,
+							err.message,
+						),
 						cmd,
 						opt.name,
 					)
@@ -582,7 +677,10 @@ validate_parsed :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			if cmd.arguments[i].required && i >= ctx.seen_positionals {
 				return make_error(
 					.Missing_Required_Argument,
-					fmt.tprintf("Missing required argument: %s", cmd.arguments[i].name),
+					fmt.tprintf(
+						"Missing required argument: %s",
+						cmd.arguments[i].name,
+					),
 					cmd,
 				)
 			}
@@ -597,18 +695,21 @@ validate_parsed :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 // ============================================================================
 
 // make_error allocates an Error with the given reason, message, and
-// optional command/option context.
+// optional command/option context. exit_code seeds the Re_Error.exit_code
+// field handlers use to influence the process exit code.
 make_error :: proc(
 	reason: Error_Reason,
 	message: string,
 	cmd: ^Command = nil,
 	opt: string = "",
+	exit_code: int = 0,
 ) -> ^Re_Error {
 	err := new(Re_Error)
 	err.reason = reason
 	err.message = message
 	err.command = cmd
 	err.option = opt
+	err.exit_code = exit_code
 	return err
 }
 // ============================================================================
@@ -660,12 +761,18 @@ parse_options_and_args_odin :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 		value := ""
 		has_value := false
 		if colon_idx := strings.index_byte(body, ':'); colon_idx != -1 {
-			name, value, has_value = body[:colon_idx], body[colon_idx + 1:], true
+			name, value, has_value =
+				body[:colon_idx], body[colon_idx + 1:], true
 		}
 
 		// Underscores in flag names are treated as dashes (like core:flags).
 		if strings.index_byte(name, '_') != -1 {
-			name, _ = strings.replace_all(name, "_", "-", context.temp_allocator)
+			name, _ = strings.replace_all(
+				name,
+				"_",
+				"-",
+				context.temp_allocator,
+			)
 		}
 
 		// Only the long (real) name matches; `-r` would look up an option
@@ -685,7 +792,10 @@ parse_options_and_args_odin :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			if has_value {
 				return make_error(
 					.Invalid_Value,
-					fmt.tprintf("Boolean option -%s does not take a value", name),
+					fmt.tprintf(
+						"Boolean option -%s does not take a value",
+						name,
+					),
 					ctx.current_cmd,
 					name,
 				)
@@ -696,19 +806,27 @@ parse_options_and_args_odin :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			if !has_value {
 				return make_error(
 					.Missing_Required_Option,
-					fmt.tprintf("Option -%s requires a value (-%s:value)", name, name),
+					fmt.tprintf(
+						"Option -%s requires a value (-%s:value)",
+						name,
+						name,
+					),
 					ctx.current_cmd,
 					name,
 				)
 			}
-			parsed_val, err := parse_value(value, opt.type_info)
+			parsed_val, err := parse_value(ctx, value, opt.type_info)
 			if err != nil {
 				return err
 			}
 			if opt.multiple {
 				existing := ctx.values[opt.name]
 				if existing != "" {
-					ctx.values[opt.name] = strings.concatenate({existing, ",", parsed_val})
+					joined := strings.concatenate(
+						{existing, ",", parsed_val},
+						context.temp_allocator,
+					)
+					ctx.values[opt.name] = value_copy(ctx, joined)
 				} else {
 					ctx.values[opt.name] = parsed_val
 				}

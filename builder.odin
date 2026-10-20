@@ -7,10 +7,10 @@ package reflags
 // Preset Arg_Type_Info values for the common primitive types; pass these
 // to opt_type / arg_type.
 string_type :: Arg_Type_Info{.String, nil, nil}
-int_type :: Arg_Type_Info{.Int, nil, nil}
-float_type :: Arg_Type_Info{.Float, nil, nil}
-bool_type :: Arg_Type_Info{.Bool, nil, nil}
-path_type :: Arg_Type_Info{.Path, nil, nil}
+int_type    :: Arg_Type_Info{.Int, nil, nil}
+float_type  :: Arg_Type_Info{.Float, nil, nil}
+bool_type   :: Arg_Type_Info{.Bool, nil, nil}
+path_type   :: Arg_Type_Info{.Path, nil, nil}
 
 // enum_type creates an Enum Arg_Type_Info restricted to the given values.
 // The values are copied to a stable heap allocation so they outlive the
@@ -29,7 +29,9 @@ enum_type :: proc(values: []string) -> Arg_Type_Info {
 
 // custom_type creates a Custom Arg_Type_Info that delegates parsing to the
 // supplied procedure.
-custom_type :: proc(parse_fn: proc(_: string) -> (any, ^Re_Error)) -> Arg_Type_Info {
+custom_type :: proc(
+	parse_fn: proc(_: string) -> (any, ^Re_Error),
+) -> Arg_Type_Info {
 	return Arg_Type_Info{.Custom, nil, parse_fn}
 }
 
@@ -412,12 +414,22 @@ cmd_build :: proc(b: Command_Builder) -> Command {
 
 // make_cli creates a CLI descriptor with color output enabled.
 make_cli :: proc(name, version: string, root: ^Command) -> CLI {
-	return CLI{name = name, version = version, root_cmd = root, color_enabled = true}
+	return CLI {
+		name = name,
+		version = version,
+		root_cmd = root,
+		color_enabled = true,
+	}
 }
 
 // make_cli_no_color creates a CLI descriptor with color output disabled.
 make_cli_no_color :: proc(name, version: string, root: ^Command) -> CLI {
-	return CLI{name = name, version = version, root_cmd = root, color_enabled = false}
+	return CLI {
+		name = name,
+		version = version,
+		root_cmd = root,
+		color_enabled = false,
+	}
 }
 
 // ============================================================================

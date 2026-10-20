@@ -72,17 +72,15 @@ case "run":
 }
 ```
 
-Error helpers for handlers:
+Error helpers for handlers (they print to stderr and exit code comes from
+returning the error up to the parser):
 
 ```odin
-reflags.command_error(os.to_stream(os.stderr), "myapp build", "Compilation failed: ...")
-reflags.error_hint(os.to_stream(os.stderr), "build")
-os.exit(1)
+return reflags.command_fail("myapp build", "Compilation failed: ...")
 ```
 
-`command_error` prints `myapp <cmd> error: <msg>` in bold red; `error_hint`
-prints the dim `Run '<cmd> -help' for usage.` follow-up (use `error_hint_unix`
-for `--help` instead).
+`command_fail` prints `myapp build error: ...` in bold red and returns an
+Error carrying the exit code for the parser (1 unless overridden).️
 
 Options can also be built step by step with `option` + `opt_*` procedures
 (`opt_short`, `opt_required`, `opt_hidden`, `opt_multiple`, `opt_default`,
@@ -109,8 +107,15 @@ append(&my_cmd.arguments, reflags.arg_build(arg_b))
 
 Command handlers receive a `Parsed_Args` and read values back with the
 `get_*` accessors (`get_string`, `get_int`, `get_bool`, `get_float`,
-`get_strings`, `get_enum`). Handlers may return an `^Error` (see `make_error`);
-`Help_Requested` / `Version_Requested` reasons print help/version and exit 0.
+`get_strings`, `get_enum`). Handlers may return an `^Error` (see `make_error`
+and `command_fail`); `Help_Requested` / `Version_Requested` reasons print
+help/version and exit 0.
+
+For teardown: `destroy_cli` frees the command tree that `make_cli` keeps
+alive (notes, options, arguments, subcommands, and the heap-allocated
+root command). `destroy(parsed)` frees the parsed maps plus every value
+string the parser built itself. Values that only borrow from the raw
+arguments are not allocated at all.
 
 See `examples/hello_world/` for a minimal example, or `examples/toolkit/` for a full multi-command CLI.
 */
