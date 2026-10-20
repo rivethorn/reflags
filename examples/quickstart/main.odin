@@ -15,9 +15,7 @@ build_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 
 	if !silent {
 		mode := release ? "release" : "debug"
-		reflags.success(
-			fmt.tprintf("Building in %s mode (jobs: %d)", mode, jobs),
-		)
+		reflags.success(fmt.tprintf("Building in %s mode (jobs: %d)", mode, jobs))
 	}
 	return nil
 }
@@ -26,6 +24,7 @@ run_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	release := reflags.get_bool(args, "release")
 	silent := reflags.get_bool(args, "silent")
 	app_args := reflags.get_strings(args, "args")
+	defer delete(app_args)
 
 	if !silent {
 		mode := release ? "release" : "debug"
@@ -42,10 +41,7 @@ test_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	watch := reflags.get_bool(args, "watch")
 
 	if filter != "" {
-		reflags.info_msg(
-			os.stdout,
-			fmt.tprintf("Running tests matching: %s", filter),
-		)
+		reflags.info_msg(os.stdout, fmt.tprintf("Running tests matching: %s", filter))
 	} else {
 		reflags.info_msg(os.stdout, "Running all tests")
 	}
@@ -66,27 +62,15 @@ main :: proc() {
 	// --- Build command ---
 	build_cmd := reflags.command("build", "Compile the project")
 	build_cmd.alias = "b"
-	append(
-		&build_cmd.notes,
-		"Use '--' to pass extra flags through to the compiler",
-	)
-	append(
-		&build_cmd.options,
-		reflags.opt_flag("release", "", "Compile in release mode"),
-	)
-	append(
-		&build_cmd.options,
-		reflags.opt_flag("silent", "", "Silent terminal output"),
-	)
+	append(&build_cmd.notes, "Use '--' to pass extra flags through to the compiler")
+	append(&build_cmd.options, reflags.opt_flag("release", "", "Compile in release mode"))
+	append(&build_cmd.options, reflags.opt_flag("silent", "", "Silent terminal output"))
 
 	// Step-by-step builder for an int option with a note
 	jobs_builder := reflags.option("jobs", "Number of parallel jobs")
 	reflags.opt_type(&jobs_builder, reflags.int_type)
 	reflags.opt_default(&jobs_builder, "1")
-	reflags.opt_note(
-		&jobs_builder,
-		"Defaults to 1; set higher for faster builds",
-	)
+	reflags.opt_note(&jobs_builder, "Defaults to 1; set higher for faster builds")
 	append(&build_cmd.options, reflags.opt_build(jobs_builder))
 
 	build_cmd.handler = build_handler
@@ -94,26 +78,14 @@ main :: proc() {
 	// --- Run command ---
 	run_cmd := reflags.command("run", "Build if needed, then run the project")
 	run_cmd.alias = "r"
-	append(
-		&run_cmd.options,
-		reflags.opt_flag("release", "", "Run the release build"),
-	)
-	append(
-		&run_cmd.options,
-		reflags.opt_flag("silent", "", "Silent terminal output"),
-	)
+	append(&run_cmd.options, reflags.opt_flag("release", "", "Run the release build"))
+	append(&run_cmd.options, reflags.opt_flag("silent", "", "Silent terminal output"))
 
 	// Variadic argument with a note
-	run_args := reflags.argument(
-		"args",
-		"Arguments passed through to the binary",
-	)
+	run_args := reflags.argument("args", "Arguments passed through to the binary")
 	reflags.arg_optional(&run_args)
 	reflags.arg_variadic(&run_args)
-	reflags.arg_note(
-		&run_args,
-		"Introduce them with '--' so they are not parsed as options",
-	)
+	reflags.arg_note(&run_args, "Introduce them with '--' so they are not parsed as options")
 	append(&run_cmd.arguments, reflags.arg_build(run_args))
 
 	run_cmd.handler = run_handler
@@ -121,16 +93,10 @@ main :: proc() {
 	// --- Test command ---
 	test_cmd := reflags.command("test", "Run the test suite")
 	test_cmd.alias = "t"
-	append(
-		&test_cmd.options,
-		reflags.opt_flag("watch", "", "Re-run on file changes"),
-	)
+	append(&test_cmd.options, reflags.opt_flag("watch", "", "Re-run on file changes"))
 
 	// String option with attached value (Odin style: -filter:value)
-	filter_builder := reflags.option(
-		"filter",
-		"Only run tests matching this filter",
-	)
+	filter_builder := reflags.option("filter", "Only run tests matching this filter")
 	reflags.opt_type(&filter_builder, reflags.string_type)
 	append(&test_cmd.options, reflags.opt_build(filter_builder))
 
@@ -150,6 +116,7 @@ main :: proc() {
 	root_ptr^ = root
 
 	cli: reflags.CLI = reflags.make_cli("myapp", "1.0.0", root_ptr)
+	defer reflags.destroy_cli(&cli)
 	cli.style = .Odin // single-dash flags, -flag:value, -- separator
 
 	parsed := reflags.parse_or_exit(&cli, os.args[1:])
@@ -165,6 +132,7 @@ main :: proc() {
 	if handler != nil {
 		if err := handler(parsed); err != nil {
 			reflags.print_error(&cli, err)
+			free(err)
 			os.exit(1)
 		}
 	}

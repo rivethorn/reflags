@@ -1,9 +1,9 @@
 package hello_world_example
 
-import "core:os"
-import "core:fmt"
-import "core:strings"
 import reflags "../.."
+import "core:fmt"
+import "core:os"
+import "core:strings"
 
 main :: proc() {
 	// Define a root command with one string option and one bool flag.
@@ -16,6 +16,7 @@ main :: proc() {
 	root_ptr^ = root
 
 	cli: reflags.CLI = reflags.make_cli("greet", "1.0.0", root_ptr)
+	defer reflags.destroy_cli(&cli)
 
 	// Parse arguments; prints help/version/errors and exits on its own.
 	parsed := reflags.parse_or_exit(&cli, os.args[1:])

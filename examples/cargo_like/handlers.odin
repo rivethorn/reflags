@@ -68,6 +68,7 @@ run_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	bin_name := reflags.get_string(args, "bin")
 	example_name := reflags.get_string(args, "example")
 	passed_args := reflags.get_strings(args, "args")
+	defer delete(passed_args)
 
 	if verbose {
 		reflags.info_msg(os.stdout, "Building and running...")
@@ -80,12 +81,7 @@ run_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 		target = example_name
 	}
 
-	fmt.printf(
-		"  %sRunning%s %s\n",
-		reflags.color_bold,
-		reflags.color_reset,
-		target,
-	)
+	fmt.printf("  %sRunning%s %s\n", reflags.color_bold, reflags.color_reset, target)
 
 	if len(passed_args) > 0 {
 		fmt.printf("  Args: %v\n", passed_args)
@@ -100,6 +96,7 @@ test_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	no_run := reflags.get_bool(args, "no-run")
 	test_filter := reflags.get_string(args, "test")
 	passed_args := reflags.get_strings(args, "args")
+	defer delete(passed_args)
 
 	if verbose {
 		reflags.info_msg(os.stdout, "Testing...")
@@ -185,12 +182,7 @@ new_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 		proj_type = "binary"
 	}
 
-	fmt.printf(
-		"  %sCreating%s %s project\n",
-		reflags.color_bold,
-		reflags.color_reset,
-		proj_type,
-	)
+	fmt.printf("  %sCreating%s %s project\n", reflags.color_bold, reflags.color_reset, proj_type)
 	fmt.printf("  Name: %s\n", name)
 	fmt.printf("  Path: %s\n", path)
 	fmt.printf("  VCS: %s\n", vcs)
@@ -238,12 +230,7 @@ add_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	build := reflags.get_bool(args, "build")
 	target := reflags.get_string(args, "target")
 
-	fmt.printf(
-		"  %sAdding%s dependency: %s\n",
-		reflags.color_bold,
-		reflags.color_reset,
-		dep,
-	)
+	fmt.printf("  %sAdding%s dependency: %s\n", reflags.color_bold, reflags.color_reset, dep)
 
 	if features != "" {
 		fmt.printf("  Features: %s\n", features)
@@ -278,13 +265,7 @@ remove_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	dep_type := "dependency"
 	if dev {dep_type = "dev-dependency"} else if build {dep_type = "build-dependency"}
 
-	fmt.printf(
-		"  %sRemoving%s %s: %s\n",
-		reflags.color_bold,
-		reflags.color_reset,
-		dep_type,
-		dep,
-	)
+	fmt.printf("  %sRemoving%s %s: %s\n", reflags.color_bold, reflags.color_reset, dep_type, dep)
 
 	if target != "" {
 		fmt.printf("  Target: %s\n", target)
@@ -296,6 +277,7 @@ remove_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 
 update_handler :: proc(args: reflags.Parsed_Args) -> ^reflags.Error {
 	packages := reflags.get_strings(args, "packages")
+	defer delete(packages)
 
 	reflags.info_msg(os.stdout, "Updating dependencies...")
 

@@ -213,9 +213,7 @@ add_project_opts :: proc(c: ^reflags.Command) {
 		reflags.Option {
 			name = "vcs",
 			description = "Initialize a new VCS repository (git, hg, pijul, fossil, none)",
-			type_info = reflags.enum_type(
-				[]string{"git", "hg", "pijul", "fossil", "none"},
-			),
+			type_info = reflags.enum_type([]string{"git", "hg", "pijul", "fossil", "none"}),
 			default_str = "git",
 		},
 	)
@@ -224,9 +222,7 @@ add_project_opts :: proc(c: ^reflags.Command) {
 		reflags.Option {
 			name = "edition",
 			description = "Edition to set for the crate",
-			type_info = reflags.enum_type(
-				[]string{"2015", "2018", "2021", "2024"},
-			),
+			type_info = reflags.enum_type([]string{"2015", "2018", "2021", "2024"}),
 			default_str = "2024",
 		},
 	)
@@ -491,10 +487,7 @@ new_cmd :: proc() -> reflags.Command {
 }
 
 init_cmd :: proc() -> reflags.Command {
-	c := reflags.command(
-		"init",
-		"Create a new project in an existing directory",
-	)
+	c := reflags.command("init", "Create a new project in an existing directory")
 	c.long_desc = "Create a new project in the current directory.\nThis is useful for initializing a project in an existing directory."
 	append(
 		&c.options,
@@ -648,9 +641,11 @@ CLI :: proc() -> reflags.CLI {
 	root^ = c
 
 	return reflags.CLI {
-		name = "cargo",
-		version = "1.80.0",
-		root_cmd = root,
+		name          = "cargo",
+		version       = "1.80.0",
+		root_cmd      = root,
 		color_enabled = true,
+		// Cargo's CLI is Unix-style (--long, bundled shorts).
+		style         = .Unix,
 	}
 }
