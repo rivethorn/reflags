@@ -182,23 +182,31 @@ print_help :: proc(cli: ^CLI, out: ^os.File, cmd: ^Command = nil) {
 	fmt.fprint(out, strings.to_string(builder))
 }
 
-// print_version writes the CLI name and version to out.
+// print_version writes the CLI name and version to out, matching the
+// header style of the help page.
 print_version :: proc(cli: ^CLI, out: ^os.File) {
 	s := get_style(cli)
+	if len(cli.version) == 0 {
+		fmt.fprintfln(out, "%s%s%s%s", s.bold, s.bright_cyan, cli.name, s.reset)
+		return
+	}
 	fmt.fprintfln(
 		out,
-		"%s%s v%s%s",
+		"%s%s%s %sv%s%s",
 		s.bold,
 		s.bright_cyan,
+		cli.name,
+		s.dim,
 		cli.version,
 		s.reset,
 	)
 }
 
-// print_error prints err to stderr. Help_Requested reasons print the help
-// page and Version_Requested reasons print the version instead; anything
-// else prints a styled "<name> error:" message plus a usage hint.
-print_error :: proc(cli: ^CLI, err: ^Re_Error) {
+// print_error_re prints err to stderr. Help_Requested reasons print the
+// help page and Version_Requested reasons print the version instead;
+// anything else prints a styled "<name> error:" message plus a usage hint.
+@(private = "file")
+print_error_re :: proc(cli: ^CLI, err: ^Re_Error) {
 	s := get_style(cli)
 
 	#partial switch err.reason {
@@ -238,6 +246,33 @@ print_error :: proc(cli: ^CLI, err: ^Re_Error) {
 			)
 		}
 	}
+}
+
+// print_error_any prints any ^Error the CLI carries: a Re_Error is handled
+// per its reason; a raw os.Error prints as a styled message.
+@(private = "file")
+print_error_any :: proc(cli: ^CLI, err: ^Error) {
+	switch &e in err^ {
+	case Re_Error:
+		print_error_re(cli, &e)
+	case os.Error:
+		s := get_style(cli)
+		prefix := fmt.tprintf(
+			"%s%s%s error:%s",
+			s.bold,
+			s.bright_red,
+			cli.name,
+			s.reset,
+		)
+		fmt.eprintfln("%s %v", prefix, e)
+	}
+}
+
+// print_error conforms over both error flavors: ^Re_Error (what parse and
+// make_error return) and ^Error (what command handlers return).
+print_error :: proc {
+	print_error_re,
+	print_error_any,
 }
 
 // ============================================================================
@@ -628,7 +663,8 @@ type_display_name :: proc(t: Arg_Type_Info) -> string {
 }
 
 // write_wrapped writes text to the builder, wrapping at width columns and
-// indenting every line with indent.
+// indenting every line with indent. Embedded newlines are hard line breaks:
+// the column counter resets there and the following words soft-wrap again.
 write_wrapped :: proc(
 	builder: ^strings.Builder,
 	text: string,
@@ -636,23 +672,43 @@ write_wrapped :: proc(
 	indent: string,
 ) {
 	words := strings.split(text, " ", context.temp_allocator)
+
 	line_width := len(indent)
+	at_line_start := true
 
 	strings.write_string(builder, indent)
 
 	for word in words {
-		word_len := len(word)
-		if line_width + word_len + 1 > width && line_width > len(indent) {
-			strings.write_byte(builder, '\n')
-			strings.write_string(builder, indent)
-			line_width = len(indent)
+		// A word may carry hard breaks itself ("some\nwords"); each part
+		// between them is laid out like any other word.
+		parts := strings.split(word, "\n", context.temp_allocator)
+
+		for part, j in parts {
+			if j > 0 {
+				// Hard break: start a fresh line even if the segment
+				// is empty, so blank lines survive.
+				strings.write_byte(builder, '\n')
+				strings.write_string(builder, indent)
+				line_width = len(indent)
+				at_line_start = true
+			}
+			if len(part) == 0 {
+				continue
+			}
+			if !at_line_start {
+				if line_width + len(part) + 1 > width {
+					strings.write_byte(builder, '\n')
+					strings.write_string(builder, indent)
+					line_width = len(indent)
+				} else {
+					strings.write_byte(builder, ' ')
+					line_width += 1
+				}
+			}
+			strings.write_string(builder, part)
+			line_width += len(part)
+			at_line_start = false
 		}
-		if line_width > len(indent) {
-			strings.write_byte(builder, ' ')
-			line_width += 1
-		}
-		strings.write_string(builder, word)
-		line_width += word_len
 	}
 	strings.write_byte(builder, '\n')
 }

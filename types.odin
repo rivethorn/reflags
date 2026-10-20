@@ -197,6 +197,12 @@ get_float :: proc(
 // get_strings splits the value of `name` on commas and returns the pieces.
 // Useful for `multiple` options and `variadic` arguments; returns nil if the
 // name was not provided.
+//
+// Ownership: the slice itself is freshly allocated (delete it when done —
+// `delete(pieces)`), but the piece strings borrow storage owned by the
+// Parsed_Args. Free the pieces with delete only, never delete_string on an
+// element, and keep the slice alive no longer than the parsed args
+// (destroy invalidates it).
 get_strings :: proc(args: Parsed_Args, name: string) -> []string {
 	if val, ok := args.values[name]; ok {
 		if val == "" {
@@ -311,13 +317,14 @@ Error :: union {
 
 // Parsing_Style selects the command-line syntax accepted by parse.
 //
-// `.Unix` (default) accepts `--flag`, `--flag=value`, `--flag value`, and
-// bundled short flags (`-abc`).
+// `.Odin` (the zero value, and the documented default) mirrors
+// core:flags' Odin style: flags are introduced with a single dash
+// (`-flag`), value options take an attached value (`-flag:value` or
+// `-flag=value`), and underscores in flag names are treated as dashes
+// (`-no_git` matches an option named `no-git`).
 //
-// `.Odin` mirrors core:flags' Odin style: flags are introduced with a
-// single dash (`-flag`), value options take an attached value
-// (`-flag:value` or `-flag=value`), and underscores in flag names are
-// treated as dashes (`-no_git` matches an option named `no-git`).
+// `.Unix` accepts `--flag`, `--flag=value`, `--flag value`, and bundled
+// short flags (`-abc`).
 Parsing_Style :: enum {
 	Odin,
 	Unix,
