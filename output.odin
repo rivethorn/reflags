@@ -594,7 +594,9 @@ write_subcommands :: proc(
 	for i in 0 ..< len(cmd.subcommands) {
 		sub := &cmd.subcommands[i]
 		if sub.hidden {continue}
-		if len(sub.name) > max_name_len {max_name_len = len(sub.name)}
+		if len(sub.name) + len(sub.alias) > max_name_len {
+			max_name_len = len(sub.name) + len(sub.alias)
+		}
 	}
 
 	for i in 0 ..< len(cmd.subcommands) {
@@ -605,9 +607,22 @@ write_subcommands :: proc(
 		strings.write_string(builder, s.bold)
 		strings.write_string(builder, s.green)
 		strings.write_string(builder, sub.name)
+		if sub.alias != "" {
+			strings.write_string(builder, "  ")
+			strings.write_string(builder, s.reset)
+			strings.write_string(builder, s.dim)
+			strings.write_string(builder, "(alias: ")
+			strings.write_string(builder, s.bold)
+			strings.write_string(builder, s.green)
+			strings.write_string(builder, sub.alias)
+			strings.write_string(builder, s.reset)
+			strings.write_string(builder, s.dim)
+			strings.write_string(builder, ")")
+		}
 		strings.write_string(builder, s.reset)
 
-		padding := max_name_len - len(sub.name) + 2
+		alias_pad := sub.alias != "" ? 2 : 13
+		padding := max_name_len - len(sub.name) - len(sub.alias) + alias_pad
 		strings.write_string(
 			builder,
 			strings.repeat(" ", padding, context.temp_allocator),
