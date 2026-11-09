@@ -12,8 +12,7 @@ main :: proc() {
 	append(&root.options, reflags.opt_flag("shout", "s", "Shout the greeting"))
 
 	// The CLI must outlive parse, so root lives on the heap.
-	root_ptr := new(reflags.Command)
-	root_ptr^ = root
+	root_ptr := new_clone(root)
 
 	cli: reflags.CLI = reflags.make_cli("greet", "1.0.0", root_ptr)
 	defer reflags.destroy_cli(&cli)
@@ -26,7 +25,12 @@ main :: proc() {
 	name := reflags.get_string(parsed, "name")
 	shout := reflags.get_bool(parsed, "shout")
 
-	greeting := fmt.tprintf("Hello, %s!", name)
+	greeting := "Hello There!"
+
+	if name != "" {
+		greeting = fmt.tprintf("Hello, %s!", name)
+	}
+
 	if shout {
 		greeting = strings.to_upper(greeting, context.temp_allocator)
 	}
