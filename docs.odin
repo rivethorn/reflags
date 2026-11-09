@@ -26,49 +26,32 @@ import "core:os"
 import "core:fmt"
 import "pkgs:reflags"
 
-build_cmd := reflags.command("build", "Compile the project into bin/")
-build_cmd.alias = "b"  // optional alias
-append(&build_cmd.options, reflags.opt_flag("release", "", "Compile in release mode"))
-append(&build_cmd.options, reflags.opt_flag("silent", "", "Silent terminal output"))
-append(&build_cmd.notes, "Use '--' to pass args through to the compiler")
+main :: proc() {
+	// Define a root command with one string option and one bool flag.
+	root := reflags.command("greet", "Say hello")
+	append(&root.options, reflags.opt_str("name", "n", "Who to greet"))
+	append(&root.options, reflags.opt_flag("shout", "s", "Shout the greeting"))
 
-run_cmd := reflags.command("run", "Build if needed, then run the project")
-run_cmd.alias = "r"
-append(&run_cmd.options, reflags.opt_flag("release", "", "Compile and run in release mode"))
-run_cmd_args := reflags.argument("args", "Arguments passed through to the binary")
-reflags.arg_optional(&run_cmd_args)
-reflags.arg_variadic(&run_cmd_args)
-append(&run_cmd.arguments, reflags.arg_build(run_cmd_args))
+	// The CLI must outlive parse, so root lives on the heap.
+	root_ptr := new(reflags.Command)
+	root_ptr^ = root
 
-root := reflags.command("myapp", "A swiss-army knife for your project")
-root.long_desc = "A swiss-army knife for your project.\\nBuild, run, and test with one tool."
-cmds := []reflags.Command{ build_cmd, run_cmd }
-for sub in cmds {
-	append(&root.subcommands, sub)
-}
-root_ptr := new(reflags.Command)
-root_ptr^ = root
+	cli: reflags.CLI = reflags.make_cli("greet", "1.0.0", root_ptr)
+	defer reflags.destroy_cli(&cli)
 
-cli: reflags.CLI = reflags.make_cli("myapp", "0.1.0", root_ptr)
-cli.style = .Odin
+	// Parse arguments; prints help/version/errors and exits on its own.
+	parsed := reflags.parse_or_exit(&cli, os.args[1:])
+	defer reflags.destroy(parsed)
 
-parsed := reflags.parse_or_exit(&cli, os.args[1:])
-defer reflags.destroy(parsed)
+	// Read values back with the get_* accessors.
+	name := reflags.get_string(parsed, "name")
+	shout := reflags.get_bool(parsed, "shout")
 
-if parsed.command.name == "myapp" {
-	os.exit(1)
-}
-
-match parsed.command.name {
-case "build":
-	release := reflags.get_bool(parsed, "release")
-	silent  := reflags.get_bool(parsed, "silent")
-	fmt.printfln("Building (release=%v, silent=%v)", release, silent)
-case "run":
-	release := reflags.get_bool(parsed, "release")
-	silent  := reflags.get_bool(parsed, "silent")
-	run_args := reflags.get_strings(parsed, "args")
-	fmt.printfln("Running (release=%v, silent=%v, args=%v)", release, silent, run_args)
+	greeting := fmt.tprintf("Hello, %s!", name)
+	if shout {
+		greeting = strings.to_upper(greeting, context.temp_allocator)
+	}
+	fmt.println(greeting)
 }
 ```
 
