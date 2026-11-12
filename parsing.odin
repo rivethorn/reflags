@@ -16,6 +16,7 @@ Parse_Ctx :: struct {
 	current_cmd:      ^Command,
 	args:             []string,
 	values:           map[string]string,
+	multiple_values:  map[string][dynamic]string,
 	positionals:      [dynamic]string,
 	owned:            [dynamic]string, // Fresh strings stored into `values`
 	seen_options:     map[string]bool,
@@ -35,6 +36,29 @@ value_copy :: proc(ctx: ^Parse_Ctx, val: string) -> string {
 	return owned
 }
 
+@(private = "file")
+store_option_value :: proc(ctx: ^Parse_Ctx, opt: Option, value: string) {
+	if !opt.multiple {
+		ctx.values[opt.name] = value
+		return
+	}
+
+	values := ctx.multiple_values[opt.name]
+	append(&values, value)
+	ctx.multiple_values[opt.name] = values
+
+	existing := ctx.values[opt.name]
+	if existing != "" {
+		joined := strings.concatenate(
+			{existing, ",", value},
+			context.temp_allocator,
+		)
+		ctx.values[opt.name] = value_copy(ctx, joined)
+	} else {
+		ctx.values[opt.name] = value
+	}
+}
+
 // discard_ctx_owned frees the parse-owned value strings of a failed parse.
 @(private = "file")
 discard_ctx_owned :: proc(ctx: ^Parse_Ctx) {
@@ -51,10 +75,8 @@ discard_ctx_owned :: proc(ctx: ^Parse_Ctx) {
 // parse parses args (typically os.args[1:]) against the CLI's command
 // tree. It matches commands/subcommands (including aliases), parses options
 // and positional arguments, and validates required fields / applies
-// defaults. Returns the parsed result or an ^Error — free one of the two
-// outcomes whichever you got: destroy(parsed) on success, delete(err) on
-// failure. destroy_cli(&cli) tears down the CLI tree itself, after the
-// parsed result is done being used.
+// defaults. Returns the parsed result or an ^Error. Call destroy on the
+// result when done.
 parse :: proc(
 	cli: ^CLI,
 	args: []string,
@@ -64,19 +86,21 @@ parse :: proc(
 	^Re_Error,
 ) {
 	ctx := Parse_Ctx {
-		cli          = cli,
-		current_cmd  = cli.root_cmd,
-		args         = args,
-		values       = make(map[string]string),
-		positionals  = make([dynamic]string),
-		seen_options = make(map[string]bool),
-		strict       = strict,
-		style        = cli.style,
+		cli             = cli,
+		current_cmd     = cli.root_cmd,
+		args            = args,
+		values          = make(map[string]string),
+		multiple_values = make(map[string][dynamic]string),
+		positionals     = make([dynamic]string),
+		seen_options    = make(map[string]bool),
+		strict          = strict,
+		style           = cli.style,
 	}
 
 	// Parse command hierarchy
 	if err := parse_commands(&ctx); err != nil {
 		delete(ctx.values)
+		destroy_multiple_values(ctx.multiple_values)
 		delete(ctx.positionals)
 		delete(ctx.seen_options)
 		discard_ctx_owned(&ctx)
@@ -86,6 +110,7 @@ parse :: proc(
 	// Parse options and arguments for the final command
 	if err := parse_options_and_args(&ctx); err != nil {
 		delete(ctx.values)
+		destroy_multiple_values(ctx.multiple_values)
 		delete(ctx.positionals)
 		delete(ctx.seen_options)
 		discard_ctx_owned(&ctx)
@@ -95,6 +120,7 @@ parse :: proc(
 	// Validate required options/args
 	if err := validate_parsed(&ctx); err != nil {
 		delete(ctx.values)
+		destroy_multiple_values(ctx.multiple_values)
 		delete(ctx.positionals)
 		delete(ctx.seen_options)
 		discard_ctx_owned(&ctx)
@@ -104,23 +130,25 @@ parse :: proc(
 	parsed: Parsed_Args
 	parsed.command = ctx.current_cmd
 	parsed.values = ctx.values
+	parsed.multiple_values = ctx.multiple_values
 	parsed.positionals = ctx.positionals[:]
-	parsed.raw_args = args
 	parsed.owned = ctx.owned[:]
 	delete(ctx.seen_options)
 
 	return parsed, nil
 }
 
+@(private = "file")
+destroy_multiple_values :: proc(values: map[string][dynamic]string) {
+	for _, list in values {
+		delete(list)
+	}
+	delete(values)
+}
+
 // parse_or_exit is a convenience wrapper around parse: on error it prints
 // the error (help/version reasons exit 0, everything else exits 1). The
 // caller must still call destroy on the result.
-// parse_or_exit is the library wrapper for simple programs: on a parse
-// error it prints the error (help/version requests print their pages) and
-// exits the process — so it never returns the error and it does not run
-// callers' defers. Use parse for full control over teardown and exit
-// codes. The CLI tree must still be torn down by the caller with
-// destroy_cli, and any handler ^Error with delete.
 parse_or_exit :: proc(cli: ^CLI, args: []string) -> Parsed_Args {
 	parsed, err := parse(cli, args, true)
 	if err != nil {
@@ -144,8 +172,11 @@ parse_commands :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 		arg := ctx.args[0]
 
 		// Check for help/version flags early
-		if err := check_help_version(ctx, arg); err != nil {
-			return err
+		if arg == "--help" || arg == "-h" || arg == "-help" {
+			return make_error(.Help_Requested, "", ctx.current_cmd)
+		}
+		if arg == "--version" || arg == "-V" || arg == "-version" {
+			return make_error(.Version_Requested, "", ctx.current_cmd)
 		}
 
 		// Stop at first non-flag (positional or subcommand)
@@ -164,38 +195,6 @@ parse_commands :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 		break
 	}
 	return nil
-}
-
-// check_help_version recognizes the built-in help/version flags anywhere.
-// If the current command defines its own help/version option, that option
-// wins and the flag falls through to ordinary option parsing.
-@(private = "file")
-check_help_version :: proc(ctx: ^Parse_Ctx, arg: string) -> ^Re_Error {
-	switch arg {
-	case "-h", "-help", "--help":
-		if !cmd_defines_option_named(ctx, "help", "h") {
-			return make_error(.Help_Requested, "", ctx.current_cmd)
-		}
-	case "-V", "-version", "--version":
-		if !cmd_defines_option_named(ctx, "version", "V") {
-			return make_error(.Version_Requested, "", ctx.current_cmd)
-		}
-	}
-	return nil
-}
-
-// cmd_defines_option_named reports whether the current command has an
-// option with the given long name (or Unix-style short), which means a
-// same-named flag is the user's own option rather than a built-in.
-@(private = "file")
-cmd_defines_option_named :: proc(ctx: ^Parse_Ctx, name, short: string) -> bool {
-	for i in 0 ..< len(ctx.current_cmd.options) {
-		opt := &ctx.current_cmd.options[i]
-		if opt.name == name || opt.short == short {
-			return true
-		}
-	}
-	return false
 }
 
 // try_match_subcommand advances ctx.current_cmd to the subcommand named
@@ -250,11 +249,6 @@ parse_options_and_args :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 	for i < len(ctx.args) {
 		arg := ctx.args[i]
 
-		// Help/version requests are honored anywhere.
-		if err := check_help_version(ctx, arg); err != nil {
-			return err
-		}
-
 		// `--` ends option parsing; everything after is positional.
 		if !only_positionals && arg == "--" {
 			only_positionals = true
@@ -268,8 +262,8 @@ parse_options_and_args :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			}
 			arg_index += 1
 		} else if strings.has_prefix(arg, "--") {
-			// Long option: --name, --name=value, or --name value
-			if err := parse_long_option(ctx, arg, long_options, &i); err != nil {
+			// Long option: --name or --name=value
+			if err := parse_long_option(ctx, arg, long_options); err != nil {
 				return err
 			}
 		} else if strings.has_prefix(arg, "-") && len(arg) > 1 {
@@ -291,15 +285,11 @@ parse_options_and_args :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 	return nil
 }
 
-// parse_long_option handles a single `--name`, `--name=value`, or
-// `--name value` argument (the separate-value form only in Unix style);
-// index_ptr points at `arg`'s position in ctx.args and advances when the
-// next argument is consumed as the value.
+// parse_long_option handles a single `--name`, `--name=value` argument.
 parse_long_option :: proc(
 	ctx: ^Parse_Ctx,
 	arg: string,
 	options: map[string]^Option,
-	index_ptr: ^int,
 ) -> ^Re_Error {
 	name_value := arg[2:] // strip --
 
@@ -340,52 +330,23 @@ parse_long_option :: proc(
 		ctx.seen_options[name] = true
 	} else {
 		if !has_value {
-			// Unix style: take the next argument as this option's value,
-			// e.g. `--out bin/app`. Anything that reads like a flag is not
-			// a value; give negative numbers as --name=-3.
-			if index_ptr^ + 1 < len(ctx.args) &&
-			   !looks_like_flag(ctx.args[index_ptr^ + 1]) {
-				index_ptr^ += 1
-				value = ctx.args[index_ptr^]
-			} else {
-				return make_error(
-					.Missing_Required_Option,
-					fmt.tprintf("Option --%s requires a value", name),
-					ctx.current_cmd,
-					name,
-				)
-			}
+			// Need to consume next arg as value
+			return make_error(
+				.Missing_Required_Option,
+				fmt.tprintf("Option --%s requires a value", name),
+				ctx.current_cmd,
+				name,
+			)
 		}
 		parsed_val, err := parse_value(ctx, value, opt.type_info)
 		if err != nil {
 			return err
 		}
-		if opt.multiple {
-			existing := ctx.values[name]
-			if existing != "" {
-				joined := strings.concatenate(
-					{existing, ",", parsed_val},
-					context.temp_allocator,
-				)
-				ctx.values[name] = value_copy(ctx, joined)
-			} else {
-				ctx.values[name] = parsed_val
-			}
-		} else {
-			ctx.values[name] = parsed_val
-		}
+		store_option_value(ctx, opt, parsed_val)
 		ctx.seen_options[name] = true
 	}
 
 	return nil
-}
-
-// looks_like_flag reports whether an argument reads like a flag rather
-// than an option's value: anything starting with '-' (including a lone
-// '-' and '--').
-@(private = "file")
-looks_like_flag :: proc(arg: string) -> bool {
-	return strings.has_prefix(arg, "-")
 }
 
 // parse_short_options handles a `-...` cluster: bundled flags (-abc),
@@ -428,20 +389,7 @@ parse_short_options :: proc(
 					if err != nil {
 						return err
 					}
-					if opt.multiple {
-						existing := ctx.values[opt.name]
-						if existing != "" {
-							joined := strings.concatenate(
-								{existing, ",", parsed_val},
-								context.temp_allocator,
-							)
-							ctx.values[opt.name] = value_copy(ctx, joined)
-						} else {
-							ctx.values[opt.name] = parsed_val
-						}
-					} else {
-						ctx.values[opt.name] = parsed_val
-					}
+					store_option_value(ctx, opt, parsed_val)
 					ctx.seen_options[opt.name] = true
 					break
 				}
@@ -451,20 +399,7 @@ parse_short_options :: proc(
 				if err != nil {
 					return err
 				}
-				if opt.multiple {
-					existing := ctx.values[opt.name]
-					if existing != "" {
-						joined := strings.concatenate(
-							{existing, ",", parsed_val},
-							context.temp_allocator,
-						)
-						ctx.values[opt.name] = value_copy(ctx, joined)
-					} else {
-						ctx.values[opt.name] = parsed_val
-					}
-				} else {
-					ctx.values[opt.name] = parsed_val
-				}
+				store_option_value(ctx, opt, parsed_val)
 				ctx.seen_options[opt.name] = true
 				break
 			} else if index_ptr^ + 1 < len(ctx.args) {
@@ -483,20 +418,7 @@ parse_short_options :: proc(
 				if err != nil {
 					return err
 				}
-				if opt.multiple {
-					existing := ctx.values[opt.name]
-					if existing != "" {
-						joined := strings.concatenate(
-							{existing, ",", parsed_val},
-							context.temp_allocator,
-						)
-						ctx.values[opt.name] = value_copy(ctx, joined)
-					} else {
-						ctx.values[opt.name] = parsed_val
-					}
-				} else {
-					ctx.values[opt.name] = parsed_val
-				}
+				store_option_value(ctx, opt, parsed_val)
 				ctx.seen_options[opt.name] = true
 			} else {
 				return make_error(
@@ -529,6 +451,8 @@ parse_positional :: proc(
 			break
 		}
 		if arg_index^ == i {
+
+			arg_def_index = i
 			arg_def_index = i
 			break
 		}
@@ -758,9 +682,6 @@ validate_parsed :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 // make_error allocates an Error with the given reason, message, and
 // optional command/option context. exit_code seeds the Re_Error.exit_code
 // field handlers use to influence the process exit code.
-//
-// Ownership: the returned error is heap-allocated; the receiver frees it
-// with `delete(err)` when done (print_error does not take ownership).
 make_error :: proc(
 	reason: Error_Reason,
 	message: string,
@@ -802,11 +723,6 @@ parse_options_and_args_odin :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 	i := 0
 	for i < len(ctx.args) {
 		arg := ctx.args[i]
-
-		// Help/version requests are honored anywhere.
-		if err := check_help_version(ctx, arg); err != nil {
-			return err
-		}
 
 		// `--` ends option parsing; everything after is positional.
 		if !only_positionals && arg == "--" {
@@ -888,20 +804,7 @@ parse_options_and_args_odin :: proc(ctx: ^Parse_Ctx) -> ^Re_Error {
 			if err != nil {
 				return err
 			}
-			if opt.multiple {
-				existing := ctx.values[opt.name]
-				if existing != "" {
-					joined := strings.concatenate(
-						{existing, ",", parsed_val},
-						context.temp_allocator,
-					)
-					ctx.values[opt.name] = value_copy(ctx, joined)
-				} else {
-					ctx.values[opt.name] = parsed_val
-				}
-			} else {
-				ctx.values[opt.name] = parsed_val
-			}
+			store_option_value(ctx, opt, parsed_val)
 			ctx.seen_options[opt.name] = true
 		}
 

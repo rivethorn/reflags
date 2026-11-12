@@ -78,8 +78,8 @@ opt_hidden :: proc(b: ^Option_Builder) -> bool {
 	return true
 }
 
-// opt_multiple allows the option to be repeated; values are joined with
-// commas (read them back with get_strings).
+// opt_multiple allows the option to be repeated; read its values with
+// get_strings.
 opt_multiple :: proc(b: ^Option_Builder) -> bool {
 	b.opt.multiple = true
 	return true

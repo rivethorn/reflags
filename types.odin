@@ -126,14 +126,15 @@ Command :: struct {
 // values (read them back with the get_* accessors), and `positionals` holds
 // the raw positional arguments. Call destroy when finished.
 Parsed_Args :: struct {
-	command:     ^Command, // The matched command (or root)
-	values:      map[string]string, // option/arg name -> string value
-	positionals: []string, // Raw positional args
-	raw_args:    []string, // All raw args after command
+	command:         ^Command, // The matched command (or root)
+	values:          map[string]string, // option/arg name -> string value
+	multiple_values: map[string][dynamic]string, // Exact values for repeated options
+	positionals:     []string, // Raw positional args
+	raw_args:        []string, // All raw args after command
 	// owned strings are values the parser built itself (typed values,
 	// joined repetitions): destroy frees them. All other values borrow
 	// from the raw argument strings the caller passed to parse.
-	owned:       []string,
+	owned:           []string,
 }
 
 // Get a typed value from parsed args
@@ -194,21 +195,20 @@ get_float :: proc(
 	return default_val
 }
 
-// get_strings splits the value of `name` on commas and returns the pieces.
-// Useful for `multiple` options and `variadic` arguments; returns nil if the
-// name was not provided.
-//
-// Ownership: the slice itself is freshly allocated (delete it when done —
-// `delete(pieces)`), but the piece strings borrow storage owned by the
-// Parsed_Args. Free the pieces with delete only, never delete_string on an
-// element, and keep the slice alive no longer than the parsed args
-// (destroy invalidates it).
+// get_strings returns exact values for `multiple` options, or splits
+// `variadic` argument values on commas. Returns nil if the name was not
+// provided.
 get_strings :: proc(args: Parsed_Args, name: string) -> []string {
+	if vals, ok := args.multiple_values[name]; ok {
+		result := make([dynamic]string, 0, len(vals), context.allocator)
+		append(&result, ..vals[:])
+		return result[:]
+	}
 	if val, ok := args.values[name]; ok {
 		if val == "" {
 			return nil
 		}
-		// Split comma-separated values for multiple options
+		// Variadic positional arguments are stored comma-separated.
 		return strings.split(val, ",", context.allocator)
 	}
 	return nil
@@ -234,6 +234,10 @@ destroy :: proc(args: Parsed_Args) {
 	for owned in args.owned {
 		delete_string(owned)
 	}
+	for _, values in args.multiple_values {
+		delete(values)
+	}
+	delete(args.multiple_values)
 	delete(args.values)
 	delete(args.positionals)
 	delete(args.owned)
@@ -317,14 +321,13 @@ Error :: union {
 
 // Parsing_Style selects the command-line syntax accepted by parse.
 //
-// `.Odin` (the zero value, and the documented default) mirrors
-// core:flags' Odin style: flags are introduced with a single dash
-// (`-flag`), value options take an attached value (`-flag:value` or
-// `-flag=value`), and underscores in flag names are treated as dashes
-// (`-no_git` matches an option named `no-git`).
+// `.Unix` (default) accepts `--flag`, `--flag=value`, `--flag value`, and
+// bundled short flags (`-abc`).
 //
-// `.Unix` accepts `--flag`, `--flag=value`, `--flag value`, and bundled
-// short flags (`-abc`).
+// `.Odin` mirrors core:flags' Odin style: flags are introduced with a
+// single dash (`-flag`), value options take an attached value
+// (`-flag:value` or `-flag=value`), and underscores in flag names are
+// treated as dashes (`-no_git` matches an option named `no-git`).
 Parsing_Style :: enum {
 	Odin,
 	Unix,
